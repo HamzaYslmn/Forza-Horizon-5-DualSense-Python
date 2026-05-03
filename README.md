@@ -10,6 +10,9 @@
 
 ---
 
+## TUI Screenshot
+![alt text](img/tui.png)
+
 ## 📜 Table of Contents
 1. [Why this exists](#-why-this-exists)
 2. [What you'll feel](#-what-youll-feel)

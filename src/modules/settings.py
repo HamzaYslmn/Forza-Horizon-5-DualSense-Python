@@ -67,3 +67,12 @@ class Settings:
     # --- Misc ---
     enable_startup_pulse: bool = True
     startup_pulse_force: int = 150
+
+    # --- Auto-exit when FH5 closes (cross-platform: Windows + Linux/Proton) ---
+    exit_on_game_close: bool = True
+    game_process_name_contains: tuple = ("forza",)
+    game_poll_interval_s: float = 1.0
+    # Fallback: if we've received UDP packets and they stop for this long, exit
+    # anyway. Catches Task Manager kills and cases where psutil can't see the
+    # game process. Long enough to survive pause menus / loading screens.
+    telemetry_lost_exit_s: float = 60.0

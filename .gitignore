@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# fh5ds user toggle preferences (per-user, not part of the project)
+user_preferences.json

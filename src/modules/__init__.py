@@ -3,6 +3,8 @@ import logging
 import os
 import sys
 
+from . import dualsense, udplistener, loop, exit_detection
+
 def setup_logging(debug: bool = False) -> None:
     """Configures the root logger with a colorful formatter if supported."""
     if os.name == "nt":

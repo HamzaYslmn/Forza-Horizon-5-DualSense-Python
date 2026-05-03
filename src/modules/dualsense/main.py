@@ -37,10 +37,7 @@ def _find_gamepad():
             log.warning("Usage page/usage not found, picking first matching VID/PID: %s", d.get("path"))
             return d
 
-    raise RuntimeError(
-        "DualSense gamepad interface not found. "
-        "If Steam Input + HidHide is on, allowlist python.exe."
-    )
+    raise RuntimeError("DualSense gamepad not found.")
 
 
 def _is_bluetooth(info):
