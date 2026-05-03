@@ -14,6 +14,7 @@ from textual.widgets import Footer, Header, Label, RichLog, Switch
 
 from modules import dualsense, loop, preferences, udplistener
 from modules.dualsense.triggers import off, vibration
+from modules.update_check import log_latest_commit_age
 
 # Haptic feedback played on the controller when a switch is toggled.
 HAPTIC_FREQ_HZ = 40
@@ -86,14 +87,21 @@ class TriggerTUI(App):
         self.title = "FH5 DualSense"
         self.sub_title = f"UDP {self.settings.udp_host}:{self.settings.udp_port}"
 
-        # Route logs into the right pane (replace any stderr handler).
+        # Route logs into the right pane. Strip stream handlers (they'd
+        # corrupt the TUI rendering) but KEEP FileHandlers so crash logs
+        # still get written to disk.
         root = logging.getLogger()
         for h in list(root.handlers):
-            root.removeHandler(h)
+            if not isinstance(h, logging.FileHandler):
+                root.removeHandler(h)
         handler = _LogToWidget(self)
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
         root.addHandler(handler)
-        root.setLevel(logging.INFO)
+        if root.level > logging.INFO or root.level == 0:
+            root.setLevel(logging.INFO)
+
+        # Fire the GitHub commit-age check now that the log handler is wired.
+        log_latest_commit_age()
 
         # Open hardware + listener and start the loop in a background thread.
         s = self.settings

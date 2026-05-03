@@ -5,6 +5,18 @@ import sys
 
 from . import dualsense, udplistener, loop, exit_detection
 
+
+def install_file_logging(path) -> None:
+    """Add a FileHandler so crashes survive a closed terminal window.
+    Truncates on each run so the file always reflects the current session."""
+    fh = logging.FileHandler(path, mode="w", encoding="utf-8")
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    fh.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    root.addHandler(fh)
+    if root.level > logging.DEBUG or root.level == 0:
+        root.setLevel(logging.DEBUG)
+
 def setup_logging(debug: bool = False) -> None:
     """Configures the root logger with a colorful formatter if supported."""
     if os.name == "nt":

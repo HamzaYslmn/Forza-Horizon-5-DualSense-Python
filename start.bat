@@ -32,8 +32,13 @@ if "%~1"=="" (
     )
     pause
 ) else (
-    :: Steam Start Minimized
-    start "FH5 DualSense" /MIN uv run main.py
+    :: Steam wrapper. Prefer Windows Terminal (Win11 native) when available.
+    where wt >nul 2>nul
+    if !errorlevel! equ 0 (
+        start "" wt.exe new-tab --title "FH5 DualSense" -d "%~dp0src" cmd /c "uv run main.py"
+    ) else (
+        start "FH5 DualSense" /MIN uv run main.py
+    )
     start "" %*
     exit /b 0
 )
