@@ -3,7 +3,8 @@
     "allow": [
       "Bash(uv run *)",
       "WebSearch",
-      "WebFetch"
+      "WebFetch",
+      "Bash(uv lock *)"
     ]
   }
 }
