@@ -5,8 +5,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from modules import dualsense, udplistener, setup_logging, loop
-from modules import preferences
+from modules import dualsense, udplistener, setup_logging, loop, profiles
 from modules.settings import Settings
 from modules.update_check import log_latest_commit_age
 
@@ -45,9 +44,26 @@ def run(s: Settings) -> None:
         ds.close()
 
 
-def run_tui(s: Settings) -> None:
-    from modules.tui import TriggerTUI
-    TriggerTUI(s).run()
+def run_gui(s: Settings, debug: bool) -> bool:
+    """Launch the CustomTkinter GUI. Returns False if the GUI stack can't be
+    loaded (e.g. `tkinter` missing on a minimal Linux install) so the caller
+    can fall back to headless mode."""
+    try:
+        from modules.gui import TriggerGUI  # noqa: PLC0415 — import after Tk check
+    except ImportError as exc:
+        # Most common cause on Linux: python3-tk not installed. Print a clear
+        # install hint to stderr before falling through.
+        sys.stderr.write(
+            "\n[fhds] GUI dependencies are missing: "
+            f"{exc.name or exc}.\n"
+            "[fhds] On Debian/Ubuntu:  sudo apt install python3-tk\n"
+            "[fhds] On Fedora:         sudo dnf install python3-tkinter\n"
+            "[fhds] On Arch:           sudo pacman -S tk\n"
+            "[fhds] Falling back to headless mode.\n\n"
+        )
+        return False
+    TriggerGUI(s).run()
+    return True
 
 
 # MARK: Entry point
@@ -56,19 +72,40 @@ if __name__ == "__main__":
     p.add_argument("--host", default="127.0.0.1", help="UDP bind address")
     p.add_argument("--port", type=int, default=None, help="UDP port")
     p.add_argument("--debug", action="store_true", help="Verbose per-packet logs")
-    p.add_argument("--no-tui", action="store_true", help="Disable TUI, use console logs")
+    p.add_argument("--gui", action="store_true",
+                   help="Opt in to the experimental CustomTkinter desktop GUI. "
+                        "Default is headless (console logs) — the GUI is still "
+                        "rough around window-resize performance.")
+    p.add_argument("--headless", action="store_true",
+                   help="Explicitly request headless mode (this is the default).")
+    p.add_argument("--profile", default=None,
+                   help="Load this named tuning profile at startup (created if missing)")
+    # --no-tui kept as a hidden alias so existing Steam Launch Options keep working.
+    # Since headless is now the default, --no-tui is effectively a no-op but
+    # logs a one-line deprecation hint.
+    p.add_argument("--no-tui", dest="no_tui", action="store_true", help=argparse.SUPPRESS)
     args = p.parse_args()
 
     settings = Settings()
-    preferences.load(settings)
+    try:
+        profiles.load_or_migrate(settings, requested=args.profile)
+    except profiles.InvalidProfileName as e:
+        sys.stderr.write(f"[fhds] Invalid --profile value: {e}\n")
+        sys.exit(2)
     if args.host is not None: settings.udp_host = args.host
     if args.port is not None: settings.udp_port = args.port
 
     sys.excepthook = _excepthook
 
     if args.no_tui:
-        setup_logging(args.debug)
-        log_latest_commit_age()
-        run(settings)
-    else:
-        run_tui(settings)
+        sys.stderr.write("[fhds] --no-tui is a no-op (headless is the default). "
+                         "Pass --gui to launch the experimental window.\n")
+
+    if args.gui:
+        if run_gui(settings, args.debug):
+            sys.exit(0)
+        # GUI couldn't load — fall through to headless so the user still
+        # gets working triggers. `run_gui` already printed the install hint.
+    setup_logging(args.debug)
+    log_latest_commit_age()
+    run(settings)

@@ -87,3 +87,8 @@ class Settings:
     game_process_name_contains: tuple = ("forza",)
     game_poll_interval_s: float = 1.0
     telemetry_lost_exit_s: float = 60.0
+
+    # When True, closing the window hides to the system tray instead of quitting.
+    # Auto-disabled if the tray can't initialize (typically Linux without an
+    # AppIndicator-compatible status notifier).
+    minimize_to_tray: bool = True
