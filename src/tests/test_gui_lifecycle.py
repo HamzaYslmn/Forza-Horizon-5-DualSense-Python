@@ -13,12 +13,11 @@ from modules.settings import Settings
 
 
 @pytest.mark.gui
-def test_lifecycle(tmp_path, monkeypatch, display_required):
+def test_lifecycle(isolated_profiles, display_required):
     """Build → start → schedule quit → mainloop exits → idempotent re-quit."""
-    import modules.preferences as preferences
-    monkeypatch.setattr(preferences, "PATH", tmp_path / "user_preferences.json")
-
+    profiles = isolated_profiles["profiles"]
     s = Settings()
+    profiles.load_or_migrate(s)
     from modules.gui import TriggerGUI
     gui = TriggerGUI(s)
 

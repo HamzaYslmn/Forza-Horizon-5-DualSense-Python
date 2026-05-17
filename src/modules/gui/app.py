@@ -25,9 +25,10 @@ from typing import Callable
 
 import customtkinter as ctk
 
-from modules import preferences
+from modules import profiles
 from modules.gui.backend import BackendController
 from modules.gui.labels import STARTUP_HINT
+from modules.gui.profile_bar import ProfileBar
 from modules.gui.tabs import build_controls_tab, build_settings_tab, coerce_clamp
 from modules.gui.widgets import LogHandler, LogTextbox, safe_after_cancel, safe_destroy
 from modules.preferences import _version
@@ -204,14 +205,19 @@ class TriggerGUI:
         self._bind_shortcuts()
 
     def _build_top_bar(self) -> None:
-        bar = ctk.CTkFrame(self.root, height=32, corner_radius=0)
+        bar = ctk.CTkFrame(self.root, height=40, corner_radius=0)
         bar.pack(side="top", fill="x")
-        self.status_label = ctk.CTkLabel(bar, text="", anchor="w")
-        self.status_label.pack(side="left", fill="x", expand=True, padx=12, pady=4)
+        self.profile_bar = ProfileBar(
+            bar, settings=self.settings,
+            on_profile_changed=self._on_profile_changed,
+        )
+        self.profile_bar.pack(side="left", padx=8, pady=4)
         ctk.CTkLabel(
             bar, text=f"v{_version() or '?'}",
             anchor="e", text_color="gray70",
         ).pack(side="right", padx=12, pady=4)
+        self.status_label = ctk.CTkLabel(bar, text="", anchor="w")
+        self.status_label.pack(side="left", fill="x", expand=True, padx=12, pady=4)
 
     def _build_bottom_bar(self) -> None:
         bar = ctk.CTkFrame(self.root, height=40, corner_radius=0)
@@ -319,7 +325,7 @@ class TriggerGUI:
         if not hasattr(self.settings, attr):
             return
         setattr(self.settings, attr, value)
-        preferences.save(self.settings)
+        profiles.save_active(self.settings)
         self.backend.confirm_toggle(value)
 
     def _on_entry_changed(self, attr: str) -> None:
@@ -338,13 +344,28 @@ class TriggerGUI:
         if new == current:
             return
         setattr(self.settings, attr, new)
-        preferences.save(self.settings)
+        profiles.save_active(self.settings)
         log.info("%s = %s", attr, new)
 
     def _on_reset(self) -> None:
-        preferences.reset(self.settings)
+        # Reset mutates `self.settings` to dataclass defaults; the active
+        # profile's file is also rewritten so the new defaults persist.
+        for attr in list(self._switch_vars) + list(self._entry_vars):
+            if hasattr(Settings, attr):
+                setattr(self.settings, attr, getattr(Settings(), attr))
+        profiles.save_active(self.settings)
         self._refresh_input_widgets()
         log.info("Settings reset to defaults.")
+
+    def _on_profile_changed(self, name: str) -> None:
+        try:
+            profiles.load(name, self.settings)
+            profiles.set_active(name)
+        except Exception:
+            log.exception("Failed to switch profile '%s'", name)
+            return
+        self._refresh_input_widgets()
+        log.info("Loaded profile '%s'.", name)
 
     def _refresh_input_widgets(self) -> None:
         """Re-sync every switch and entry from the current `self.settings`."""

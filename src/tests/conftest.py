@@ -1,6 +1,8 @@
 """Shared fixtures.
 
-Tests run from `src/`, so the `modules` package is already importable.
+Tests run from `src/`, so the `modules` package is already importable. The
+`isolated_profiles` fixture redirects `modules.profiles` paths into a
+per-test `tmp_path` so tests can never disturb the user's real profile dir.
 
 `tk_root` boots a hidden `CTk` root for tests that need a parent widget.
 It's function-scoped on purpose: Tkinter wants exactly one root per process,
@@ -18,6 +20,30 @@ import pytest
 SRC = Path(__file__).resolve().parents[1]
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+
+@pytest.fixture
+def isolated_profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Redirect `modules.profiles` paths into `tmp_path / 'profiles'`.
+
+    Also patches the legacy file path so the migration test can stage an old
+    `user_preferences.json` in the temp dir instead of next to main.py.
+    """
+    import modules.profiles as profiles  # imported lazily so sys.path is set
+
+    profiles_root = tmp_path / "profiles"
+    legacy = tmp_path / "user_preferences.json"
+    monkeypatch.setattr(profiles, "ROOT", profiles_root)
+    monkeypatch.setattr(profiles, "INDEX_PATH", profiles_root / "index.json")
+    monkeypatch.setattr(profiles, "LEGACY_PREFERENCES", legacy)
+    monkeypatch.setattr(profiles, "LEGACY_BACKUP",
+                        legacy.with_suffix(legacy.suffix + ".bak"))
+    return {
+        "profiles": profiles,
+        "root": profiles_root,
+        "legacy": legacy,
+        "legacy_backup": legacy.with_suffix(legacy.suffix + ".bak"),
+    }
 
 
 def _have_display() -> bool:

@@ -43,7 +43,7 @@ filterwarnings = [
 # Scope: only my contribution. The rest of the codebase has its own style
 # and is out of scope for this PR.
 python_version = "3.13"
-files = ["modules/gui"]
+files = ["modules/gui", "modules/profiles.py"]
 follow_imports = "silent"   # imported modules (settings, preferences, etc.) aren't type-checked
 ignore_missing_imports = true
 warn_unused_ignores = true

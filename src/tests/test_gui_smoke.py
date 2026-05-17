@@ -1,10 +1,10 @@
-"""GUI smoke test — construct/destroy + live-mutation against one Tk root.
+"""GUI smoke test — construct/destroy + full live-mutation flow.
 
 Tkinter strongly prefers one Tk root per process, so this file runs ONE
 consolidated test that builds a TriggerGUI and exercises every wiring path
-(construction, switch toggle, entry change, reset) against that single root.
-Each assertion has a descriptive label in the failure message so the test
-still pinpoints which step broke.
+(construction, switch toggle, entry change, profile switch, reset) against
+that single root. Each assertion has a descriptive label in the failure
+message so the test still pinpoints which step broke.
 
 A separate `test_gui_lifecycle.py` covers shutdown / mainloop paths in
 isolation — pytest invocations are separate, so each gets its own root.
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
 
 import pytest
 
@@ -23,13 +22,11 @@ from modules.settings import Settings
 
 
 @pytest.mark.gui
-def test_full_gui_flow(tmp_path, monkeypatch, display_required):
+def test_full_gui_flow(isolated_profiles, display_required):
     """One test, one GUI, many assertions."""
-    # Redirect preferences.PATH into tmp_path so we don't disturb the user's file
-    import modules.preferences as preferences
-    monkeypatch.setattr(preferences, "PATH", tmp_path / "user_preferences.json")
-
+    profiles = isolated_profiles["profiles"]
     s = Settings()
+    profiles.load_or_migrate(s)
 
     from modules.gui import TriggerGUI
     from modules.gui.widgets import HelpButton
@@ -40,7 +37,6 @@ def test_full_gui_flow(tmp_path, monkeypatch, display_required):
         _pump(gui, ticks=5)
 
         # ---- Construction --------------------------------------------------
-        # 7 toggle switches (4 brake + 3 throttle), 28 numeric entries
         assert len(gui._switch_vars) == 7, "expected 7 toggle switches"
         assert len(gui._entry_vars) == 28, "expected 28 numeric entries"
 
@@ -63,17 +59,16 @@ def test_full_gui_flow(tmp_path, monkeypatch, display_required):
 
         # ---- Toggle switch persistence ------------------------------------
         gui._on_switch_toggled("enable_abs", False)
-        assert gui.settings.enable_abs is False
-        # preferences.save was called — file should now exist
-        prefs_path = Path(preferences.PATH)
-        assert prefs_path.exists(), "preferences file should be written on toggle"
-        data = json.loads(prefs_path.read_text())
-        assert data["enable_abs"] is False
+        default_path = isolated_profiles["root"] / "default.json"
+        data = json.loads(default_path.read_text())
+        assert data["enable_abs"] is False, "switch toggle should hit active profile file"
 
         # ---- Entry change persistence -------------------------------------
         gui._entry_vars["brake_max_force"].set("99")
         gui._on_entry_changed("brake_max_force")
         assert gui.settings.brake_max_force == 99
+        data = json.loads(default_path.read_text())
+        assert data["brake_max_force"] == 99
 
         # Out-of-range gets clamped and the entry widget shows the clamped value
         gui._entry_vars["brake_max_force"].set("9999")
@@ -87,11 +82,24 @@ def test_full_gui_flow(tmp_path, monkeypatch, display_required):
         assert gui.settings.brake_max_force == 255
         assert gui._entry_vars["brake_max_force"].get() == "255"
 
-        # ---- Reset restores dataclass defaults ----------------------------
+        # ---- Profile switching refreshes the widget vars ------------------
+        profiles.duplicate("default", "Soft", settings=gui.settings)
+        gui.settings.brake_max_force = 30
+        profiles.save_active(gui.settings)  # writes to default
+
+        gui._on_profile_changed("Soft")
+        # Soft's saved value is 255 (we just changed it before duplicating)
+        assert gui._entry_vars["brake_max_force"].get() == "255"
+
+        gui._on_profile_changed("default")
+        assert gui._entry_vars["brake_max_force"].get() == "30"
+
+        # ---- Reset restores dataclass defaults and rewrites the profile ---
         gui._on_reset()
         assert gui.settings.brake_max_force == 60
         assert gui._entry_vars["brake_max_force"].get() == "60"
-        assert gui.settings.enable_abs is True
+        data = json.loads(default_path.read_text())
+        assert data["brake_max_force"] == 60
     finally:
         gui._on_close()
 

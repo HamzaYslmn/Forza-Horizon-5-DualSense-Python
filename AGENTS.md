@@ -275,7 +275,7 @@ See README §"Troubleshooting" for the user‑facing version.
 | Change CLI / startup wiring | `src/main.py` |
 | Change a GUI label or help text | `src/modules/gui/labels.py` |
 | Change GUI layout / widgets | `src/modules/gui/app.py` |
-| Change persistence format | `src/modules/preferences.py` |
+| Change persistence format | `src/modules/preferences.py` / `src/modules/profiles.py` |
 | Change Windows launcher behavior | `win_start.bat` |
 | Change Linux launcher behavior | `linux_start.sh` |
 
