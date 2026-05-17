@@ -1,113 +1,77 @@
-> Steam profile: <https://steamcommunity.com/id/teccno/>
->
-> 💛 Huge thanks to **[Jared (jmac122)](https://github.com/jmac122)** for sponsoring this project by gifting me Forza Horizon 6. This release wouldn't exist without him. Have fun using the app.
-
 <div align="center">
   <h1>🏎️ Forza Horizon — DualSense Adaptive Triggers</h1>
-  <p><strong>Real, physics-driven trigger feedback for the Steam version of Forza Horizon.</strong></p>
-  <p><em>Lightweight · No presets · No mode juggling · One file of knobs you can edit in 10 seconds.</em></p>
+  <p><strong>Real trigger feedback for Forza Horizon on PC.</strong></p>
+  <p><em>Feel the brakes. Feel the engine. No setup juggling.</em></p>
 </div>
 
----
+![TUI Screenshot](img/tui.png)
 
-## TUI Screenshot
-![alt text](img/tui.png)
-
-## 📜 Table of Contents
-1. [Why this exists](#-why-this-exists)
-2. [What you'll feel](#-what-youll-feel)
-3. [How it works](#-how-it-works)
-4. [Installation](#%EF%B8%8F-installation)
-5. [In-game setup](#-in-game-setup)
-6. [Run it](#%EF%B8%8F-run-it)
-7. [CLI options](#%EF%B8%8F-cli-options)
-8. [Tuning the feel](#%EF%B8%8F-tuning-the-feel)
-9. [Project layout](#-project-layout)
-10. [Troubleshooting](#-troubleshooting)
-11. [Credits](#-credits)
+> 💛 Huge thanks to **[Jared (jmac122)](https://github.com/jmac122)** for sponsoring this project by gifting me Forza Horizon 6.
+>
+> Steam profile: <https://steamcommunity.com/id/teccno/>
 
 ---
 
-## 💡 Why this exists
+## 📜 Contents
+1. [What it does](#-what-it-does)
+2. [Install](#-install)
+3. [In-game setup](#-in-game-setup)
+4. [Run it](#-run-it)
+5. [Auto-launch with Steam](#-auto-launch-with-steam)
+6. [Tuning the feel](#-tuning-the-feel)
+7. [Troubleshooting](#-troubleshooting)
+8. [Credits](#-credits)
 
-Forza Horizon on PC sends rich telemetry over UDP — but Steam Input only forwards generic rumble to the DualSense. The actual **adaptive triggers** (the killer feature of the controller) just sit there doing nothing.
 
-This project bridges the gap with a tiny Python service:
-
-- It reads Forza Horizon's UDP packets each frame.
-- It computes a single adaptive-trigger command for each trigger.
-- It writes those commands to the DualSense via raw HID — **without touching the rumble bits**, so Steam keeps doing its job.
-
-The result: a brake pedal that feels like a brake pedal and a gas pedal that pushes back when the engine is working.
-
----
-
-## 🎮 What you'll feel
-
-### Left trigger — Brake
-A **continuous, exponential** brake resistance. The trigger keeps a tiny always-on baseline so it does not rapidly toggle between off and rigid near the deadzone. As brake input rises, resistance climbs softly at first and gets firmer near the end.
-
-Left-trigger effects:
-
-| Priority | Effect | Feel |
-|---------:|--------|------|
-| 1 | **ABS / tire-slip pulse** | A fast `35 Hz` vibration when braking hard enough, moving above the minimum speed, and tire slip telemetry crosses the ABS thresholds. |
-| 2 | **Progressive brake resistance** | Exponential rigid resistance from a `1`-force baseline up to `25` during normal braking. Above ~98% input it jumps to full trigger force (`255`). |
-| 3 | **Handbrake bonus** | Adds a flat `25` force on top of the normal brake resistance when the handbrake is engaged. |
-
-### Right trigger — Throttle
-Strict priority — **only one effect plays at a time**, so animations never fight:
-
-| Priority | Effect | Feel |
-|---------:|--------|------|
-| 1 | **Gear-shift thump** | A short `20 Hz` vibration burst (~100 ms) when shifting up or down while the car is moving. |
-| 2 | **Rev limiter buzz** | A `30 Hz` vibration when RPM is above the redline ratio. |
-| 3 | **Progressive throttle resistance** | Soft exponential resistance from a `1`-force baseline up to `10` during normal throttle. Above ~98% input it jumps to full trigger force (`255`). |
-
-The chain lives in [TriggerAnimation._throttle()](src/modules/dualsense/triggers.py) — about 20 lines, easy to extend.
-
-> ⚠️ **Rev limiter caveat:** the buzz fires based on `rpm / max_rpm` as a
-> percentage, not at a fixed RPM. Different cars hit their redline at
-> different fractions of telemetry `max_rpm`, so the `rev_limit_ratio`
-> setting may need to be fine-tuned per vehicle to feel right. Sorry about
-> that — it's a limitation of how Forza reports the redline.
 
 ---
 
-## ⚡ How it works
+## 💡 What it does
+
+Forza Horizon sends car telemetry over UDP, but Steam Input doesn't use the DualSense's **adaptive triggers**. This tiny app fills the gap:
+
+- **Left trigger (brake)** — pushes back harder the more you press. Buzzes like ABS when tires slip. Extra resistance when handbraking.
+- **Right trigger (throttle)** — soft progressive resistance. Thumps on gear shifts. Buzzes at the rev limiter.
+
+### How it talks to your controller without fighting Steam
 
 ```
-┌─────────────────┐   UDP 5300    ┌───────────────┐   HID write    ┌─────────────┐
-│  Forza Horizon  │ ────────────► │  fhds.py      │ ─────────────► │  DualSense  │
-│  Data Out       │   324 bytes   │  per frame    │  triggers only │  controller │
-└─────────────────┘               └───────────────┘                └─────────────┘
-                                        │
-                                        ▼
-                             Steam Input keeps owning rumble
+┌──────────────────┐    UDP 5300     ┌──────────────────┐    HID write    ┌─────────────┐
+│  Forza Horizon   │ ──────────────► │  This app        │ ──────────────► │  DualSense  │
+│  (Data Out)      │  telemetry      │  (trigger bits   │  triggers only  │  controller │
+└──────────────────┘  324 bytes      │   only)          │                 └─────────────┘
+                                     └──────────────────┘                        ▲
+                                                                                 │
+                                     ┌──────────────────┐    HID write           │
+                                     │  Steam Input     │ ──────────────────────►│
+                                     │  (rumble bits)   │  rumble + buttons      │
+                                     └──────────────────┘
 ```
 
-- **UDP listener** ([modules/udplistener/main.py](src/modules/udplistener/main.py)) parses Forza Horizon's 324-byte telemetry packet (RPM, speed, accelerator, brake, gear, drivetrain…). Each frame it **drains the socket and uses only the latest packet**, so we never react to stale telemetry if the OS queues bursts.
-- **TriggerAnimation** ([modules/dualsense/triggers.py](src/modules/dualsense/triggers.py)) turns telemetry into a `(left, right)` tuple of trigger commands.
-- **DualSense HID layer** ([modules/dualsense/main.py](src/modules/dualsense/main.py)) writes them out, flipping only the trigger bits in `valid_flag0` so Steam's rumble bytes stay untouched. The HID device is opened in **non-blocking mode** so writes fire immediately instead of waiting for an input report (important on Bluetooth).
+Both the app and Steam write to the same controller — but they touch **different bytes**:
+
+- Steam owns the **rumble motors** and button mapping.
+- This app only flips the **adaptive trigger** bits (`valid_flag0` bits `0x04` and `0x08`).
+- The HID device is opened in **non-blocking mode**, so writes fire immediately instead of waiting on the controller. Nothing gets queued, nothing blocks Steam.
+
+That's why you can run both at the same time and neither one breaks the other.
 
 ---
 
-## 🛠️ Installation
+## 🛠️ Install
 
-**Requirements:** Windows 10/11 or Linux, and a DualSense controller (USB or Bluetooth).
-
-### Click and run
+**You need:** Windows 10/11 or Linux, and a DualSense controller (USB or Bluetooth).
 
 1. Go to the [latest release](https://github.com/HamzaYslmn/Forza-Horizon-DualSense-Python/releases/latest).
 2. Download **`win_start.bat`** (Windows) or **`linux_start.sh`** (Linux).
 3. Put it in any empty folder and double-click it.
 
-That's it. The launcher takes care of everything: downloads the app into `./app/` next to itself, installs `uv` and Python if needed, and runs the TUI. Re-running it later checks for updates and asks before installing them. The window stays open on exit so any error stays on screen.
+The launcher handles everything: downloads the app, installs Python if needed, and runs it. Next time you run it, it checks for updates.
 
-> Linux users: also install `libhidapi` (`sudo apt install libhidapi-hidraw0` / `sudo pacman -S hidapi` / `sudo dnf install hidapi`) and the udev rule from `app/packaging/linux/70-dualsense.rules` so non-root users can talk to the controller. Then unplug/replug or re-pair once.
+> **Linux extras:** install `libhidapi` (`sudo apt install libhidapi-hidraw0` / `sudo pacman -S hidapi` / `sudo dnf install hidapi`) and the udev rule from `app/packaging/linux/70-dualsense.rules`. Then unplug/replug the controller once.
 
 <details>
-<summary>Manual install (developers)</summary>
+<summary>Manual install (for developers)</summary>
 
 ```bash
 git clone https://github.com/HamzaYslmn/Forza-Horizon-DualSense-Python
@@ -116,14 +80,14 @@ uv sync
 uv run main.py
 ```
 
-Install `uv` first if needed: `pip install uv` or [astral.sh/uv](https://astral.sh/uv/).
+Need `uv`? `pip install uv` or [astral.sh/uv](https://astral.sh/uv/).
 </details>
 
 ---
 
 ## 🎯 In-game setup
 
-Open Forza Horizon → **Settings → HUD and Gameplay**, scroll to the bottom:
+In Forza Horizon, open **Settings → HUD and Gameplay** and scroll to the bottom:
 
 | Setting | Value |
 |---------|-------|
@@ -141,109 +105,61 @@ Open Forza Horizon → **Settings → HUD and Gameplay**, scroll to the bottom:
 
 ## ▶️ Run it
 
-Double-click `win_start.bat` (Windows) or `linux_start.sh` (Linux). For developers, from the `src/` folder: `uv run main.py`.
+Double-click **`win_start.bat`** (Windows) or **`linux_start.sh`** (Linux).
 
-You should hear a brief startup pulse on both triggers — that confirms HID writes are landing on the controller. After that, fire up Forza Horizon and start driving.
+You'll feel a short pulse on both triggers — that means it's working. Now launch Forza Horizon and drive.
 
-> Run the script **before or while Forza Horizon is loading**. Steam Input must be active for the controller; if you use HidHide, allowlist `python.exe`.
+> Start the launcher **before** Forza Horizon. If you use HidHide, allowlist `python.exe`.
 
-### Option B: Start via Steam (Auto Launch)
-You can configure Steam to launch the DualSense script automatically in the background whenever you press **Play** on Forza Horizon.
-
-1. Open Steam, right-click **Forza Horizon** in your Library -> **Properties**.
-2. In the **General** tab, scroll down to **Launch Options**.
-3. Paste the following line exactly (update the path to wherever you downloaded this project):
-   ```text
-   cmd /c "start /MIN /D C:\Your\Path\To\Forza-Horizon-DualSense-Python\src uv run main.py" && %command%
-   ```
-
-Now, whenever you start the game from Steam, the Python script will quietly launch in a minimized window just before the game opens. No `.bat` files needed!
-
-![1778765787413](img/steaming.png)
 ---
 
-## ⚙️ CLI options
+## 🎮 Auto-launch with Steam
 
-The defaults work for almost everyone. Use these only if you need them.
+Want the triggers to turn on automatically when you press **Play**? Tell Steam to run the launcher first.
 
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--host` | UDP bind address | `127.0.0.1` |
-| `--port` | UDP port | `5300` |
-| `--debug` | Verbose per-packet logging | off |
+1. In Steam, right-click **Forza Horizon** → **Properties**.
+2. Open the **General** tab and find **Launch Options**.
+3. Paste this (change the path to where your `win_start.bat` actually is):
 
-Example:
-```bash
-cd src
-uv run main.py --port 5400 --debug
+   ```text
+   "C:\Your\Path\To\Forza-Horizon-DualSense-Python\win_start.bat" %command%
+   ```
+
+That's it. Press **Play** — the launcher runs, then the game opens.
+
+![Steam launch options](img/steaming.png)
+
+<details>
+<summary>Advanced — run the Python script directly (no BAT file)</summary>
+
+If you cloned the repo and use `uv`, paste this into **Launch Options** instead:
+
+```text
+cmd /c "start /MIN /D C:\Your\Path\To\Forza-Horizon-DualSense-Python\src uv run main.py" && %command%
 ```
+</details>
 
 ---
 
 ## 🎚️ Tuning the feel
 
-Open [src/modules/settings.py](src/modules/settings.py) and edit any field. There are **no presets, no multipliers, no inheritance** — just one flat dataclass. Changes take effect on next launch.
+Every effect (brake force, ABS buzz, gear thump, rev limiter, etc.) can be tweaked or turned off from the **Settings page in the app** — no file editing needed. Changes apply on next launch.
 
-Every trigger effect has an `enable_*` switch. Set it to `False` if you do not want that effect.
+> ⚠️ The rev limiter fires based on `rpm / max_rpm`, not a fixed RPM. Different cars hit redline at different ratios, so it may need per-car tweaking.
 
-### Brake (left trigger)
+---
 
-| Field | Default | Effect |
-|-------|--------:|--------|
-| `enable_brake_resistance` | `True` | Toggle the normal progressive brake resistance. |
-| `brake_baseline_force` | `1` | Always-held resistance. Prevents off↔rigid jitter near the deadzone. |
-| `brake_max_force` | `25` | Normal brake resistance before the full-press threshold. |
-| `brake_curve` | `2.5` | Higher = softer early press and sharper resistance near the end. |
-| `enable_handbrake_bonus` | `True` | Toggle the extra handbrake force. |
-| `handbrake_bonus` | `25` | Flat extra rigid force when the handbrake is engaged. |
-| `brake_deadzone` | `10` | Ignore brake input below this raw value (out of 255). |
-| `pedal_full_force_at` | `248` | Pedal value where the trigger jumps to full force (`255`). |
+## 🩺 Troubleshooting
 
-### ABS / tire slip (left trigger)
-
-| Field | Default | Effect |
-|-------|--------:|--------|
-| `enable_abs` | `True` | Toggle the ABS-like tire-slip vibration. |
-| `abs_brake_threshold` | `80` | Minimum brake input required before ABS can activate. |
-| `abs_min_speed_kmh` | `15.0` | Minimum speed required before ABS can activate. |
-| `abs_slip_ratio_threshold` | `1.0` | Tire slip ratio threshold for ABS vibration. |
-| `abs_combined_slip_threshold` | `1.0` | Combined tire slip threshold for ABS vibration. |
-| `abs_freq` | `35` Hz | ABS pulse frequency. |
-| `abs_amp` | `255` | ABS pulse amplitude (0-255). |
-
-### Throttle (right trigger)
-
-| Field | Default | Effect |
-|-------|--------:|--------|
-| `enable_throttle_resistance` | `True` | Toggle the normal progressive throttle resistance. |
-| `throttle_baseline_force` | `1` | Always-held resting weight. Prevents off↔rigid jitter near the deadzone. |
-| `throttle_max_force` | `10` | Normal throttle resistance before the full-press threshold. Kept softer than the brake. |
-| `throttle_curve` | `5.2` | Higher = much softer light throttle, with resistance arriving late in the press. |
-| `accel_deadzone` | `10` | Ignore tiny accelerator noise. |
-| `pedal_full_force_at` | `248` | Pedal value where the trigger jumps to full force (`255`). |
-
-### Throttle effects
-
-| Field | Default | Effect |
-|-------|--------:|--------|
-| `enable_gear_shift` | `True` | Toggle the shift thump. |
-| `gear_shift_freq` | `20` Hz | Lower = deeper thump, higher = sharper click. |
-| `gear_shift_amp` | `255` | Max amplitude (0–255). |
-| `gear_shift_duration_ms` | `100.0` | How long the burst lasts. |
-| `enable_rev_limiter` | `True` | Toggle the rev limiter buzz. |
-| `rev_limit_ratio` | `0.95` | Buzz when `rpm / max_rpm` exceeds this. |
-| `rev_limit_freq` | `30` Hz | Buzz frequency. |
-| `rev_limit_amp` | `255` | Buzz amplitude. |
-
-### Connection / system
-
-| Field | Default | Effect |
-|-------|--------:|--------|
-| `udp_host` | `"0.0.0.0"` | UDP bind address. |
-| `udp_port` | `5300` | UDP port (must match Forza Horizon). |
-| `udp_timeout` | `0.5` s | Listener timeout (used to detect "no telemetry"). |
-| `enable_startup_pulse` | `True` | Toggle the short trigger pulse on app startup. |
-| `startup_pulse_force` | `150` | Strength of the connect-confirm pulse. |
+| Symptom | Fix |
+|---------|-----|
+| `DualSense gamepad interface not found` | Controller not connected, or HidHide is hiding it — allowlist `python.exe`. |
+| `No UDP packets yet` | Forza's Data Out is off, IP/port is wrong, or Windows Firewall is blocking. |
+| Triggers feel weak | Raise `brake_max_force` / `throttle_max_force`, or lower the matching `curve`. |
+| Triggers feel like a brick wall | Lower `brake_max_force` / `throttle_max_force`, or raise the matching `curve`. |
+| Triggers feel stiff at a light press | Lower the baseline force, or raise the `curve`. |
+| No vibration on gear shift | Car must be moving faster than 3 km/h and changing between valid gears. |
+| Console window is blank after the startup pulse | Run from a terminal with `cd src && uv run main.py --no-tui` to skip the TUI. |
 
 ---
 
@@ -251,30 +167,15 @@ Every trigger effect has an `enable_*` switch. Set it to `False` if you do not w
 
 ```
 src/
-├── main.py                          # Entry point: arg parsing, packet loop
+├── main.py                          # Entry point
 └── modules/
-    ├── settings.py                  # 👈 the only file you usually edit
+    ├── settings.py                  # 👈 the file you edit
     ├── dualsense/
-    │   ├── main.py                  # HID layer (rumble bits left untouched)
-    │   └── triggers.py              # Effect primitives + TriggerAnimation
+    │   ├── main.py                  # HID layer
+    │   └── triggers.py              # Effect logic
     └── udplistener/
-        └── main.py                  # UDP socket + 324-byte packet parser
+        └── main.py                  # UDP parser
 ```
-
----
-
-## 🩺 Troubleshooting
-
-| Symptom | Likely cause / fix |
-|---------|--------------------|
-| `DualSense gamepad interface not found` | Controller not connected, or HidHide is hiding it. Allowlist `python.exe` in HidHide. |
-| `No UDP packets yet` after several seconds | Forza Horizon Data Out is off, IP/port mismatch, or Windows Firewall is blocking the bind. |
-| Triggers feel weak | Increase `brake_max_force` / `throttle_max_force`, or lower the relevant `curve` for earlier resistance. Values above `pedal_full_force_at` still jump to full force (`255`). |
-| Triggers feel like a rock wall before pedal hits 100% | Lower `brake_max_force` / `throttle_max_force`, or raise the relevant `curve` so resistance arrives later. |
-| Triggers feel too stiff at light press | Lower the relevant baseline force, or raise the relevant `curve` for a softer initial press. |
-| Brake "machine-guns" / buzzes when barely pressed | This was the original off↔rigid jitter — already fixed by the always-held baseline. If it returns, raise the deadzone or the baseline force. |
-| No vibration on gear shift | Make sure the car is moving faster than 3 km/h and the change is between valid gears. Neutral/invalid gear transitions are intentionally ignored. |
-| Console hangs on an empty window after the startup pulse | On some Windows/Python combinations the Textual TUI can fail to render even though the controller connection worked. Start from a terminal with `cd src && uv run main.py --no-tui` to use normal console logs instead. |
 
 ---
 
