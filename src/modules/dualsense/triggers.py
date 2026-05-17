@@ -186,7 +186,7 @@ class Controller:
             return pulse
         self._l2_in_wall = _wall_state(brake, self._l2_in_wall,
                                        s.brake_wall_engage_at, s.brake_wall_release_at)
-        if self._l2_in_wall and s.enable_brake_resistance:
+        if self._l2_in_wall:
             return self.wall
         return self.anim.brake_resistance(t, s)
 
@@ -201,6 +201,6 @@ class Controller:
             return rev
         self._r2_in_wall = _wall_state(accel, self._r2_in_wall,
                                        s.throttle_wall_engage_at, s.throttle_wall_release_at)
-        if self._r2_in_wall and s.enable_throttle_resistance:
+        if self._r2_in_wall:
             return self.wall
         return self.anim.throttle_ramp(t, s)
