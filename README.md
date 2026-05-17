@@ -161,7 +161,7 @@ Every effect (brake force, ABS buzz, gear thump, rev limiter, etc.) can be tweak
 | Triggers feel like a brick wall | Lower `brake_max_force` / `throttle_max_force`, or raise the matching `curve`. |
 | Triggers feel stiff at a light press | Lower the baseline force, or raise the `curve`. |
 | No vibration on gear shift | Car must be moving faster than 3 km/h and changing between valid gears. |
-| Console window is blank after the startup pulse | Run from a terminal with `cd src && uv run main.py --no-tui` to skip the TUI. |
+| Console window is blank after the startup pulse | Run from a terminal with `cd src && uv run main.py --headless` to skip the TUI. |
 
 ---
 

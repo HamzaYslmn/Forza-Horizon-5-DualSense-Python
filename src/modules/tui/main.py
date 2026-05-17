@@ -6,12 +6,12 @@ take effect immediately without a restart.
 import logging
 import threading
 import time
+import webbrowser
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Button,
-    Footer,
     Header,
     Input,
     Label,
@@ -59,18 +59,14 @@ SETTING_SECTIONS = [
     ]),
     ("Brake (left trigger)", [
         ("brake_baseline_force",    "Baseline force",     0, 255),
-        ("brake_max_force",         "Max force (at wall)",0, 255),
+        ("brake_max_force",         "Max force",0, 255),
         ("brake_curve",             "Curve",              0.1, 20.0),
-        ("brake_wall_engage_at",    "Wall engages at",    0, 255),
-        ("brake_wall_release_at",   "Wall releases at",   0, 255),
         ("handbrake_bonus",         "Handbrake bonus",    0, 255),
     ]),
     ("Throttle (right trigger)", [
         ("throttle_baseline_force",  "Baseline force",      0, 255),
-        ("throttle_max_force",       "Max force (at wall)", 0, 255),
+        ("throttle_max_force",       "Max force", 0, 255),
         ("throttle_curve",           "Curve",               0.1, 20.0),
-        ("throttle_wall_engage_at",  "Wall engages at",     0, 255),
-        ("throttle_wall_release_at", "Wall releases at",    0, 255),
     ]),
     ("ABS", [
         ("abs_brake_threshold",         "Brake threshold",         0, 255),
@@ -189,23 +185,59 @@ class TriggerTUI(App):
     .effects-grid { width: 1fr; height: auto; }
     .trigger-column { width: 1fr; height: auto; padding: 0 1; }
 
-    Label.section { text-style: bold; color: $accent; padding: 1 0 0 0; }
+    Label.section { text-style: bold; color: $accent; padding: 1 0 0 1; }
+    .effects-panel Label.section { padding: 1 0 0 3; }
 
     .row { height: 3; align-vertical: middle; padding: 0 1; }
     .row Switch { margin-right: 2; }
-    .row Label  { width: 1fr; }
-    .row Input  { width: 14; }
+    .row Label  { width: 1fr; height: 3; content-align: left middle; }
+    .row Input  { width: 14; height: 3; }
 
     #reset-settings { width: 1fr; margin: 2 0 1 0; }
 
-    RichLog { padding: 0 1; height: 1fr; }
+    #tab-logs { padding: 0; align-horizontal: left; }
+    .logs-page { width: 1fr; height: 1fr; padding: 0; }
+    .logs-toolbar {
+        height: 1; width: 1fr; padding: 0 1;
+        background: $boost;
+    }
+    .logs-toolbar Label.toolbar-caption {
+        height: 1; color: $text-muted; padding: 0 1 0 0;
+    }
+    .logs-toolbar Static.toolbar-sep {
+        height: 1; width: 3; color: $text-muted; content-align: center middle;
+    }
+    .logs-toolbar .spacer { width: 1fr; height: 1; }
+    .logs-toolbar .tb-action {
+        height: 1; padding: 0 2; margin: 0 1 0 0;
+        color: $text; background: $panel;
+        content-align: center middle;
+    }
+    .logs-toolbar .tb-action:hover { background: $accent 30%; }
+    .logs-toolbar .tb-action.-active {
+        color: $background; background: $accent; text-style: bold;
+    }
+    .logs-toolbar .tb-level { width: 11; color: $accent; text-style: bold; }
+    #log-pause { width: 9; }
+    #log-clear { width: 9; }
+    RichLog { padding: 0 1; height: 1fr; width: 1fr; border-top: hkey $foreground 20%; }
+
+    #bottombar { dock: bottom; height: 1; background: $boost; padding: 0; }
+    #bb-spacer { width: 1fr; height: 1; background: transparent; }
+    .bb-btn {
+        height: 1; min-height: 1; width: auto; min-width: 0;
+        padding: 0 2; margin: 0;
+        border: none; background: transparent; color: $text-muted;
+    }
+    .bb-btn:hover { background: $accent 30%; color: $text; }
+    #bb-sponsor { background: hotpink; color: white; text-style: bold; }
+    #bb-sponsor:hover { background: deeppink; color: white; }
     """
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("p", "toggle_pause", "Pause logs"),
-        ("l", "cycle_level", "Log level"),
-        ("c", "clear_logs", "Clear logs"),
+        ("s", "sponsor", "♥ Sponsor"),
     ]
+    SPONSOR_URL = "https://github.com/sponsors/HamzaYslmn"
 
     def __init__(self, settings):
         super().__init__()
@@ -229,8 +261,23 @@ class TriggerTUI(App):
             with TabPane("Settings", id="tab-settings"):
                 yield TuningPanel(self.settings)
             with TabPane("Logs", id="tab-logs"):
-                yield RichLog(id="logs", highlight=False, markup=False, wrap=True, max_lines=2000)
-        yield Footer()
+                with Vertical(classes="logs-page"):
+                    with Horizontal(classes="logs-toolbar"):
+                        yield Label("level", classes="toolbar-caption")
+                        yield Static(
+                            LOG_LEVELS[self._level_idx].lower(),
+                            id="log-level",
+                            classes="tb-action tb-level",
+                        )
+                        yield Static("│", classes="toolbar-sep")
+                        yield Static("pause", id="log-pause", classes="tb-action")
+                        yield Static("clear", id="log-clear", classes="tb-action")
+                        yield Static(classes="spacer")
+                    yield RichLog(id="logs", highlight=False, markup=False, wrap=True, max_lines=2000)
+        with Horizontal(id="bottombar"):
+            yield Button("q  Quit", id="bb-quit", classes="bb-btn")
+            yield Static(id="bb-spacer")
+            yield Button("♥ Sponsor", id="bb-sponsor", classes="bb-btn")
 
     def on_mount(self):
         self.title = "FH DualSense"
@@ -244,6 +291,7 @@ class TriggerTUI(App):
         root.setLevel(self._level())
 
         self._refresh_status()
+        self._refresh_log_buttons()
         self.set_interval(1.0, self._refresh_status)
         log_latest_commit_age()
         log.info("Starting controller and telemetry listener...")
@@ -310,15 +358,38 @@ class TriggerTUI(App):
     def action_toggle_pause(self):
         self._paused = not self._paused
         self._refresh_status()
+        self._refresh_log_buttons()
 
     def action_cycle_level(self):
-        self._level_idx = (self._level_idx + 1) % len(LOG_LEVELS)
+        self._set_level((self._level_idx + 1) % len(LOG_LEVELS))
+
+    def _set_level(self, idx: int):
+        if idx == self._level_idx:
+            return
+        self._level_idx = idx
         logging.getLogger().setLevel(self._level())
         self._refresh_status()
+        self._refresh_log_buttons()
         log.info("Log level: %s", LOG_LEVELS[self._level_idx])
 
     def action_clear_logs(self):
         self.query_one("#logs", RichLog).clear()
+
+    def action_sponsor(self):
+        try:
+            webbrowser.open(self.SPONSOR_URL)
+            log.info("Opened sponsor page: %s", self.SPONSOR_URL)
+        except Exception as exc:
+            log.warning("Could not open sponsor page: %s", exc)
+
+    def _refresh_log_buttons(self):
+        try:
+            self.query_one("#log-level", Static).update(LOG_LEVELS[self._level_idx].lower())
+            pause = self.query_one("#log-pause", Static)
+            pause.update("resume" if self._paused else "pause")
+            pause.set_class(self._paused, "-active")
+        except Exception:
+            pass
 
     def on_switch_changed(self, event: Switch.Changed):
         attr = event.switch.id
@@ -366,7 +437,8 @@ class TriggerTUI(App):
         log.info("%s = %s", attr, new)
 
     def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "reset-settings":
+        bid = event.button.id
+        if bid == "reset-settings":
             preferences.reset(self.settings)
             for sw in self.query(Switch):
                 if sw.id and hasattr(self.settings, sw.id):
@@ -377,6 +449,20 @@ class TriggerTUI(App):
                     if hasattr(self.settings, attr):
                         inp.value = str(getattr(self.settings, attr))
             log.info("Settings reset to defaults.")
+        elif bid == "bb-quit":
+            self.exit()
+        elif bid == "bb-sponsor":
+            self.action_sponsor()
+
+    def on_click(self, event):
+        widget = getattr(event, "widget", None)
+        wid = getattr(widget, "id", None) if widget else None
+        if wid == "log-level":
+            self.action_cycle_level()
+        elif wid == "log-pause":
+            self.action_toggle_pause()
+        elif wid == "log-clear":
+            self.action_clear_logs()
 
     def _haptic(self, on):
         if self._ds and self._ds.connected:

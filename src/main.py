@@ -56,7 +56,7 @@ if __name__ == "__main__":
     p.add_argument("--host", default="127.0.0.1", help="UDP bind address")
     p.add_argument("--port", type=int, default=None, help="UDP port")
     p.add_argument("--debug", action="store_true", help="Verbose per-packet logs")
-    p.add_argument("--no-tui", action="store_true", help="Disable TUI, use console logs")
+    p.add_argument("--headless", action="store_true", help="Disable TUI, use console logs")
     args = p.parse_args()
 
     settings = Settings()
@@ -66,7 +66,7 @@ if __name__ == "__main__":
 
     sys.excepthook = _excepthook
 
-    if args.no_tui:
+    if args.headless:
         setup_logging(args.debug)
         log_latest_commit_age()
         run(settings)
