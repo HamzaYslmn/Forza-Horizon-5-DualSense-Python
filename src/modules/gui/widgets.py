@@ -1,4 +1,4 @@
-"""GUI building-block widgets: tooltip, help button, log handler, log textbox.
+"""GUI building-block widgets: tooltip, help button, log handler, log textbox, scrolling frame.
 
 The log handler / textbox pair uses a bounded `deque` and a periodic Tk drain
 timer instead of marshaling each record with `after(0, ...)`. Under heavy
@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import tkinter as tk
 from collections import deque
+from tkinter import ttk
 
 import customtkinter as ctk
 
@@ -39,33 +40,140 @@ def safe_destroy(widget: tk.Misc | None) -> None:
         pass
 
 
+# ---- Scrolling frame -----------------------------------------------------
+class ScrollingFrame(tk.Frame):
+    """Vertical scrollable container — a lighter alternative to `CTkScrollableFrame`.
+
+    Provides an `interior` Frame that callers pack widgets into. The interior
+    expands to the canvas width and scrolls vertically when its natural height
+    exceeds the visible area. Mouse-wheel scroll is bound while the cursor is
+    over the canvas.
+
+    Used in place of CTkScrollableFrame for the Settings tab because the
+    latter re-renders its CTk-themed background through PIL on every Configure
+    event, which made window resizes laggy.
+    """
+
+    SCROLL_UNITS_PER_TICK = 3
+    BG = "#2b2b2b"
+
+    def __init__(self, master: tk.Misc, **kwargs):
+        super().__init__(master, bg=self.BG, **kwargs)
+        self._canvas = tk.Canvas(
+            self, bg=self.BG, highlightthickness=0, bd=0, takefocus=False,
+        )
+        self._scrollbar = ttk.Scrollbar(
+            self, orient="vertical", command=self._canvas.yview,
+        )
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+
+        self._scrollbar.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+
+        self.interior = tk.Frame(self._canvas, bg=self.BG)
+        self._interior_id = self._canvas.create_window(
+            (0, 0), window=self.interior, anchor="nw",
+        )
+
+        # Keep the scroll region in sync with the interior's natural size.
+        self.interior.bind("<Configure>", self._on_interior_configure)
+        # Make the interior always fill the canvas width.
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
+        # Wheel scroll when the cursor is over the canvas.
+        self._canvas.bind("<Enter>", self._bind_wheel)
+        self._canvas.bind("<Leave>", self._unbind_wheel)
+
+    def _on_interior_configure(self, _event: object) -> None:
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        # Stretch the interior to the full canvas width so child widgets
+        # using `fill="x"` actually fill.
+        self._canvas.itemconfigure(self._interior_id, width=event.width)
+
+    def _bind_wheel(self, _event: object) -> None:
+        # On Windows + macOS the wheel event delivers <MouseWheel>;
+        # on Linux it's <Button-4> / <Button-5>.
+        self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self._canvas.bind_all("<Button-4>", self._on_mousewheel_linux_up)
+        self._canvas.bind_all("<Button-5>", self._on_mousewheel_linux_down)
+
+    def _unbind_wheel(self, _event: object) -> None:
+        self._canvas.unbind_all("<MouseWheel>")
+        self._canvas.unbind_all("<Button-4>")
+        self._canvas.unbind_all("<Button-5>")
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        # Windows reports delta in multiples of 120; mac in single units.
+        step = -1 if event.delta > 0 else 1
+        self._canvas.yview_scroll(step * self.SCROLL_UNITS_PER_TICK, "units")
+
+    def _on_mousewheel_linux_up(self, _event: object) -> None:
+        self._canvas.yview_scroll(-self.SCROLL_UNITS_PER_TICK, "units")
+
+    def _on_mousewheel_linux_down(self, _event: object) -> None:
+        self._canvas.yview_scroll(self.SCROLL_UNITS_PER_TICK, "units")
+
+
 # ---- Help button ---------------------------------------------------------
-class HelpButton(ctk.CTkLabel):
+class HelpButton(tk.Canvas):
     """A small `?` icon that shows a hover tooltip and a click-modal.
 
     Both routes show the same `help_text`, so callers maintain one string per
     setting. The click-modal is useful when the user wants to *read* the help
     without it vanishing the moment they move the mouse away.
+
+    Implemented as a `tk.Canvas` with statically-drawn circle + glyph rather
+    than a `CTkLabel` with `corner_radius`: CTk re-renders the rounded
+    background through PIL on every Configure event, which made window
+    resizes laggy when ~36 of these were on screen.
     """
 
     DIAMETER = 22
+    FILL = "#4a4a4a"
+    FILL_HOVER = "#5d5d5d"
+    FG = "#f0f0f0"
 
     def __init__(self, master: tk.Misc, help_text: str, *, title: str = "What this does"):
+        # Match the parent's background so the canvas vanishes into the row.
+        # CTk widgets reject `cget("bg")` with ValueError; tk widgets give
+        # TclError if no `bg` is set. Either way, fall back to a known
+        # CTk-dark-theme color so the canvas blends in without a halo.
+        try:
+            parent_bg = master.cget("bg")
+        except (tk.TclError, ValueError):
+            parent_bg = "#2b2b2b"
         super().__init__(
             master,
-            text="?",
             width=self.DIAMETER,
             height=self.DIAMETER,
-            corner_radius=self.DIAMETER // 2,
-            fg_color=("gray80", "gray30"),
-            text_color=("gray10", "gray90"),
-            font=ctk.CTkFont(weight="bold"),
+            highlightthickness=0,
+            bd=0,
+            bg=parent_bg,
             cursor="hand2",
+        )
+        # Static items — no Configure-driven redraw, just two canvas objects.
+        pad = 2
+        self._circle = self.create_oval(
+            pad, pad, self.DIAMETER - pad, self.DIAMETER - pad,
+            fill=self.FILL, outline="",
+        )
+        self.create_text(
+            self.DIAMETER // 2, self.DIAMETER // 2,
+            text="?", fill=self.FG, font=("TkDefaultFont", 9, "bold"),
         )
         self._help_text = help_text
         self._title = title
         Tooltip(self, help_text)
         self.bind("<Button-1>", self._open_modal, add="+")
+        self.bind("<Enter>", self._on_enter, add="+")
+        self.bind("<Leave>", self._on_leave, add="+")
+
+    def _on_enter(self, _event: object = None) -> None:
+        self.itemconfig(self._circle, fill=self.FILL_HOVER)
+
+    def _on_leave(self, _event: object = None) -> None:
+        self.itemconfig(self._circle, fill=self.FILL)
 
     def _open_modal(self, _event: object = None) -> None:
         HelpDialog(self.winfo_toplevel(), self._title, self._help_text)

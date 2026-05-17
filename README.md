@@ -163,13 +163,13 @@ Every effect (brake force, ABS buzz, gear thump, rev limiter, etc.) lives in `sr
 
 If you've opted in to the **`--gui`** window, the same tunables are on the Settings tab — no file editing needed. Changes take effect on the next frame; no restart. Hover any label (or click the `?` icon next to it) for a plain-English explanation of what each setting does and what increasing, decreasing, or turning it off feels like.
 
-### 💾 Profiles
+### 💾 Profiles (works in headless + `--gui`)
 
-The top bar has a profile picker. Use **Save As…** to create a named preset (e.g. *Stock*, *Stiff Brake*, *Sport*), switch between presets with the dropdown, and **Save** to overwrite the current one. The active profile is remembered between launches; you can also load a specific one from the command line with `--profile "Sport"`. Profile files live in `app/src/profiles/` — one JSON per profile, easy to back up or share with a friend.
+Tuning presets are saved as JSON files in `app/src/profiles/` — one file per named preset (e.g. `default.json`, `Sport.json`). Load a specific one at launch with `--profile "Sport"`; the app remembers your last active profile between launches and creates the file if it doesn't exist. With `--gui` the top bar adds a picker (Save / Save As… / Rename / Delete). Files are easy to back up or share.
 
-### 🪟 System tray
+### 🪟 System tray (`--gui` only)
 
-By default the window minimizes to a tray icon when you click the X — handy when the app is auto-launched with Steam. The tray menu has **Show window**, **Pause effects**, and **Quit**. Closing from the dedicated **Quit** button (bottom-right) always exits. To always exit on X-close instead, untoggle the in-app **Minimize to tray on close** option (or edit `minimize_to_tray` in the active profile JSON). On Linux the tray needs an AppIndicator-compatible status notifier; if it can't initialize, the app silently falls back to "X always quits".
+When you launch with `--gui`, closing the window minimizes to a tray icon by default (handy with Steam auto-launch). Tray menu: **Show window**, **Pause effects**, **Quit**. The **Quit** button in the bottom-right of the window always exits. To always exit on X-close instead, untoggle **Minimize to tray on close** in the Controls tab. On Linux the tray needs an AppIndicator-compatible status notifier; if it can't initialize, the app silently falls back to "X always quits".
 
 > ⚠️ The rev limiter fires based on `rpm / max_rpm`, not a fixed RPM. Different cars hit redline at different ratios, so it may need per-car tweaking.
 

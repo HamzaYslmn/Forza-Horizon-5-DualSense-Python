@@ -198,6 +198,7 @@ uv run main.py    # runs the service
 | `--debug` | Enable per‑packet DEBUG logs |
 | `--gui` | **Opt in** to the experimental CustomTkinter window. Default is headless (no flag). |
 | `--headless` | Explicit headless mode — same as no flag. Symmetry only. |
+| `--profile NAME` | Load this named tuning profile at startup (created if missing). Works in both modes. |
 
 ### In‑game setup (must do once)
 Forza Horizon → **Settings → HUD and Gameplay → Data Out: ON**, IP `127.0.0.1`,

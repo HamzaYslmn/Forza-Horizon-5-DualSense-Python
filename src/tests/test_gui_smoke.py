@@ -38,9 +38,17 @@ def test_full_gui_flow(isolated_profiles, display_required):
 
         # ---- Construction --------------------------------------------------
         assert len(gui._switch_vars) == 8, "expected 8 toggle switches"
-        assert len(gui._entry_vars) == 28, "expected 28 numeric entries"
+        # Settings tab is lazy-built — entries don't exist until first switch
+        assert len(gui._entry_vars) == 0, "Settings tab should be empty before activation"
+        assert not gui._settings_built, "Settings should not yet be built"
 
-        # One HelpButton per control
+        # Trigger the lazy build (same as clicking the Settings tab)
+        gui._build_settings_tab_content()
+        _pump(gui, ticks=3)
+        assert gui._settings_built, "Settings should be built after activation"
+        assert len(gui._entry_vars) == 28, "expected 28 numeric entries after build"
+
+        # One HelpButton per control (now that Settings is built)
         n_help = _count(gui.root, HelpButton)
         n_controls = len(gui._switch_vars) + len(gui._entry_vars)
         assert n_help == n_controls, (

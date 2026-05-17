@@ -43,6 +43,7 @@ DEFAULT_LOG_LEVEL = "INFO"
 
 STATUS_REFRESH_MS = 1000
 BACKEND_START_DELAY_MS = 50
+RESIZE_QUIESCENT_MS = 200    # how long after the last <Configure> we treat resize as "done"
 
 WINDOW_TITLE = "FH DualSense"
 # Base geometry in "logical" 96-DPI pixels — `_apply_geometry` scales these
@@ -71,13 +72,18 @@ class TriggerGUI:
         self._level_idx = LOG_LEVELS.index(DEFAULT_LOG_LEVEL)
         self._log_handler: LogHandler | None = None
         self._status_timer: str | None = None
+        self._resize_quiesce_timer: str | None = None
+        self._resizing = False
         self._teardown_done = False
         self._quit_requested = False
 
         # Tk variables backing each input — passed to the reset action so it
-        # can refresh every widget after `preferences.reset()`.
+        # can refresh every widget after `preferences.reset()`. `_entry_vars`
+        # stays empty until the Settings tab is opened (lazy build).
         self._switch_vars: dict[str, tk.BooleanVar] = {}
         self._entry_vars: dict[str, tk.StringVar] = {}
+        self._settings_built = False
+        self._settings_loading_label: tk.Label | None = None
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -87,6 +93,9 @@ class TriggerGUI:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build_ui()
+        # Track resize bursts so we can pause non-critical work (log drain,
+        # status tick) while the user is actively dragging the window edge.
+        self.root.bind("<Configure>", self._on_root_configure, add="+")
 
     # MARK: Geometry ----------------------------------------------------------
     def _apply_geometry(self) -> None:
@@ -212,6 +221,8 @@ class TriggerGUI:
         self._teardown_done = True
         safe_after_cancel(self.root, self._status_timer)
         self._status_timer = None
+        safe_after_cancel(self.root, self._resize_quiesce_timer)
+        self._resize_quiesce_timer = None
         if self.tray is not None:
             self.tray.stop()
             self.tray = None
@@ -278,7 +289,8 @@ class TriggerGUI:
         self._bind_shortcuts()
 
     def _build_top_bar(self) -> None:
-        bar = ctk.CTkFrame(self.root, height=40, corner_radius=0)
+        bar = ctk.CTkFrame(self.root, height=40, corner_radius=0,
+                           border_width=0)
         bar.pack(side="top", fill="x")
         self.profile_bar = ProfileBar(
             bar, settings=self.settings,
@@ -293,7 +305,8 @@ class TriggerGUI:
         self.status_label.pack(side="left", fill="x", expand=True, padx=12, pady=4)
 
     def _build_bottom_bar(self) -> None:
-        bar = ctk.CTkFrame(self.root, height=40, corner_radius=0)
+        bar = ctk.CTkFrame(self.root, height=40, corner_radius=0,
+                           border_width=0)
         bar.pack(side="bottom", fill="x")
         # Quit button bypasses tray-hide: clicking the X may minimize-to-tray,
         # but the explicit Quit button always means quit.
@@ -313,7 +326,11 @@ class TriggerGUI:
                       command=self._clear_logs).pack(side="right", padx=4, pady=4)
 
     def _build_tabs(self) -> None:
-        self.tabs = ctk.CTkTabview(self.root)
+        # `command=` lets us lazy-build the Settings tab on first switch — its
+        # ~100 widgets are the main cause of window-resize lag, so keeping
+        # them un-instantiated until the user actually wants them makes
+        # resize on Controls / Logs feel close to native-Tk smoothness.
+        self.tabs = ctk.CTkTabview(self.root, command=self._on_tab_changed)
         self.tabs.pack(fill="both", expand=True, padx=8, pady=4)
         self.tabs.add("Controls")
         self.tabs.add("Settings")
@@ -323,12 +340,41 @@ class TriggerGUI:
             self.tabs.tab("Controls"), self.settings,
             on_toggle=self._on_switch_toggled,
         )
+
+        # Settings tab: stash a placeholder, build the real content on first
+        # tab activation. `_entry_vars` stays empty until then; profile
+        # switches and resets mutate `self.settings` directly, and the entry
+        # widgets read fresh values the moment they're constructed.
+        self._settings_loading_label = tk.Label(
+            self.tabs.tab("Settings"),
+            text="Loading settings…",
+            bg="#2b2b2b", fg="#aaa",
+            font=("TkDefaultFont", 11),
+        )
+        self._settings_loading_label.pack(expand=True)
+
+        self.log_box = LogTextbox(self.tabs.tab("Logs"), max_lines=2000)
+        self.log_box.pack(fill="both", expand=True, padx=4, pady=4)
+
+    def _on_tab_changed(self) -> None:
+        if self.tabs.get() == "Settings" and not self._settings_built:
+            self._build_settings_tab_content()
+
+    def _build_settings_tab_content(self) -> None:
+        """Construct the Settings tab content. Runs at most once per session."""
+        if self._settings_built:
+            return
+        if self._settings_loading_label is not None:
+            try:
+                self._settings_loading_label.destroy()
+            except tk.TclError:
+                pass
+            self._settings_loading_label = None
         self._entry_vars = build_settings_tab(
             self.tabs.tab("Settings"), self.settings,
             on_change=self._on_entry_changed, on_reset=self._on_reset,
         )
-        self.log_box = LogTextbox(self.tabs.tab("Logs"), max_lines=2000)
-        self.log_box.pack(fill="both", expand=True, padx=4, pady=4)
+        self._settings_built = True
 
     def _bind_shortcuts(self) -> None:
         # Bind to the root and consult focus_get() so single-letter shortcuts
@@ -346,9 +392,50 @@ class TriggerGUI:
         action()
         return "break"
 
+    # MARK: Resize debounce ---------------------------------------------------
+    def _on_root_configure(self, event: tk.Event) -> None:
+        """Detect a resize burst and suspend non-critical work until it ends.
+
+        Tk fires Configure events as the user drags the window edge, with the
+        bursts arriving faster than the OS finishes painting. The log drain
+        and status tick aren't useful mid-resize and just add CPU pressure,
+        so we pause them while a burst is in flight and resume `quiescent_ms`
+        after the last event.
+
+        Only acts on Configure events from the root window itself, not from
+        child widgets (their own Configure events also bubble up here).
+        """
+        if event.widget is not self.root:
+            return
+        if not self._resizing:
+            self._resizing = True
+            try:
+                self.log_box.set_paused(True)
+            except (tk.TclError, AttributeError):
+                pass
+        if self._resize_quiesce_timer is not None:
+            safe_after_cancel(self.root, self._resize_quiesce_timer)
+        try:
+            self._resize_quiesce_timer = self.root.after(
+                RESIZE_QUIESCENT_MS, self._on_resize_done,
+            )
+        except tk.TclError:
+            self._resize_quiesce_timer = None
+
+    def _on_resize_done(self) -> None:
+        self._resizing = False
+        self._resize_quiesce_timer = None
+        # Restore the user's chosen pause state (don't clobber an
+        # explicit pause from the bottom-bar button).
+        try:
+            self.log_box.set_paused(self._paused)
+        except (tk.TclError, AttributeError):
+            pass
+
     # MARK: Status bar --------------------------------------------------------
     def _tick_status(self) -> None:
-        self._refresh_status()
+        if not self._resizing:
+            self._refresh_status()
         try:
             self._status_timer = self.root.after(STATUS_REFRESH_MS, self._tick_status)
         except tk.TclError:
@@ -435,9 +522,19 @@ class TriggerGUI:
     def _on_reset(self) -> None:
         # Reset mutates `self.settings` to dataclass defaults; the active
         # profile's file is also rewritten so the new defaults persist.
+        # If the Settings tab hasn't been built yet, the entry vars are
+        # absent — settings still reset; values land when the tab is opened.
+        defaults = Settings()
         for attr in list(self._switch_vars) + list(self._entry_vars):
-            if hasattr(Settings, attr):
-                setattr(self.settings, attr, getattr(Settings(), attr))
+            if hasattr(defaults, attr):
+                setattr(self.settings, attr, getattr(defaults, attr))
+        # Always also reset every FieldSpec attr so an un-built Settings tab
+        # still gets its eventual values reset on disk.
+        from modules.gui.labels import SECTIONS
+        for _, fields in SECTIONS:
+            for spec in fields:
+                if hasattr(defaults, spec.attr):
+                    setattr(self.settings, spec.attr, getattr(defaults, spec.attr))
         profiles.save_active(self.settings)
         self._refresh_input_widgets()
         log.info("Settings reset to defaults.")
