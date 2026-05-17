@@ -4,7 +4,7 @@ import os
 
 from . import dualsense, udplistener, loop, exit_detection
 
-# MARK: Console logging setup (--no-tui mode only, TUI wires its own handler)
+# MARK: Console logging setup (--headless mode only; the GUI wires its own handler)
 def setup_logging(debug: bool = False) -> None:
     if os.name == "nt":
         os.system("")  # enable ANSI escapes on Windows CMD

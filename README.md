@@ -6,7 +6,9 @@
 
 > My Steam profile: <https://steamcommunity.com/id/teccno/>
 
-![TUI Screenshot](img/tui.png)
+<!-- Old TUI screenshot removed: the Textual TUI is replaced by an opt-in
+     CustomTkinter window. A new screenshot can land once the GUI is smoothed. -->
+
 
 > 💛 Huge thanks to **[Jared (jmac122)](https://github.com/jmac122)** for sponsoring this project by gifting me Forza Horizon 6.
 
@@ -69,6 +71,8 @@ That's why you can run both at the same time and neither one breaks the other.
 The launcher handles everything: downloads the app, installs Python if needed, and runs it. Next time you run it, it checks for updates.
 
 > **Linux extras:** install `libhidapi` (`sudo apt install libhidapi-hidraw0` / `sudo pacman -S hidapi` / `sudo dnf install hidapi`) and the udev rule from `app/packaging/linux/70-dualsense.rules`. Then unplug/replug the controller once.
+>
+> If your Python build doesn't include `tkinter` (some minimal Debian/Ubuntu images), the app prints a one-line install hint and falls back to headless (console-only) mode — your triggers still work.
 
 > **Xbox App / Microsoft Store players:** Use **DS4Windows** to make the game recognize your controller.
 
@@ -113,6 +117,16 @@ You'll feel a short pulse on both triggers — that means it's working. Now laun
 
 > Start the launcher **before** Forza Horizon. If you use HidHide, allowlist `python.exe`.
 
+### 🪟 Optional desktop GUI (experimental)
+
+Tuning lives in `src/modules/settings.py` by default — edit, save, relaunch. If you'd rather click switches and type values into a window, there's an opt-in CustomTkinter GUI. It's still rough (window resize is laggy with many widgets — a fix is in progress), so it ships behind a flag:
+
+```text
+cd src && uv run main.py --gui
+```
+
+Or, to launch via Steam with the GUI on, add `--gui` to your launcher invocation in Launch Options. Headless / console-log mode (the default, unchanged from previous releases) needs no flag.
+
 ---
 
 ## 🎮 Auto-launch with Steam
@@ -145,7 +159,9 @@ cmd /c "start /MIN /D C:\Your\Path\To\Forza-Horizon-DualSense-Python\src uv run 
 
 ## 🎚️ Tuning the feel
 
-Every effect (brake force, ABS buzz, gear thump, rev limiter, etc.) can be tweaked or turned off from the **Settings page in the app** — no file editing needed. Changes apply on next launch.
+Every effect (brake force, ABS buzz, gear thump, rev limiter, etc.) lives in `src/modules/settings.py` — edit, save, relaunch.
+
+If you've opted in to the **`--gui`** window, the same tunables are on the Settings tab — no file editing needed. Changes take effect on the next frame; no restart. Hover any label (or click the `?` icon next to it) for a plain-English explanation of what each setting does and what increasing, decreasing, or turning it off feels like.
 
 > ⚠️ The rev limiter fires based on `rpm / max_rpm`, not a fixed RPM. Different cars hit redline at different ratios, so it may need per-car tweaking.
 
@@ -161,7 +177,7 @@ Every effect (brake force, ABS buzz, gear thump, rev limiter, etc.) can be tweak
 | Triggers feel like a brick wall | Lower `brake_max_force` / `throttle_max_force`, or raise the matching `curve`. |
 | Triggers feel stiff at a light press | Lower the baseline force, or raise the `curve`. |
 | No vibration on gear shift | Car must be moving faster than 3 km/h and changing between valid gears. |
-| Console window is blank after the startup pulse | Run from a terminal with `cd src && uv run main.py --no-tui` to skip the TUI. |
+| GUI window doesn't appear after the startup pulse | The GUI is opt-in — pass `--gui` to launch it. The default (no flag) is headless mode with console logs. |
 
 ---
 
@@ -171,12 +187,18 @@ Every effect (brake force, ABS buzz, gear thump, rev limiter, etc.) can be tweak
 src/
 ├── main.py                          # Entry point
 └── modules/
-    ├── settings.py                  # 👈 the file you edit
+    ├── settings.py                  # 👈 every tunable lives here
+    ├── preferences.py               # Persists user changes to JSON
+    ├── loop.py                      # Per-frame backend loop (telemetry → triggers)
     ├── dualsense/
     │   ├── main.py                  # HID layer
     │   └── triggers.py              # Effect logic
-    └── udplistener/
-        └── main.py                  # UDP parser
+    ├── udplistener/
+    │   └── main.py                  # UDP parser
+    └── gui/
+        ├── app.py                   # CustomTkinter window + tabs + log view
+        ├── labels.py                # Plain-English labels + help text
+        └── widgets.py               # Tooltip, HelpButton, log textbox
 ```
 
 ---

@@ -27,14 +27,13 @@ rev‑limiter buzz.
 
 | Piece | What |
 |---|---|
-| Language | Python (project requires `>=3.14`, see `src/pyproject.toml`) |
+| Language | Python (project requires `>=3.13`, see `src/pyproject.toml`) |
 | Package manager | [`uv`](https://astral.sh/uv) (fast, replaces pip + venv) |
-| Single dependency | [`hidapi`](https://pypi.org/project/hidapi/) for raw HID I/O |
-| OS | Windows (HID layer + `start.bat` are Windows‑specific) |
+| Dependencies | [`hidapi`](https://pypi.org/project/hidapi/) (HID I/O), [`psutil`](https://pypi.org/project/psutil/) (exit detection), [`customtkinter`](https://pypi.org/project/customtkinter/) (GUI) |
+| OS | Windows + Linux (HID open path branches; launchers exist for both) |
 | Hardware | DualSense or DualSense Edge over USB or Bluetooth |
 
-No tests, no CI, no linter run automatically. `ruff` line length is set in
-`pyproject.toml` but not enforced.
+`ruff` line length is set in `pyproject.toml`. See §11 for tests + lint.
 
 ---
 
@@ -42,35 +41,52 @@ No tests, no CI, no linter run automatically. `ruff` line length is set in
 
 ```
 Forza-Horizon-DualSense-Python/
-├── README.md            # User‑facing docs (install, in‑game setup, tuning)
-├── AGENTS.md            # ← you are here (developer onboarding)
+├── README.md             # User‑facing docs (install, in‑game setup, tuning)
+├── AGENTS.md             # ← you are here (developer onboarding)
 ├── LICENSE
-├── start.bat            # Windows launcher: installs uv if missing, runs main.py
-├── img/                 # Screenshots used in README
-├── .github/FUNDING.yml  # GitHub sponsorship config
+├── win_start.bat         # Windows launcher: installs uv if missing, runs main.py
+├── linux_start.sh        # Linux/macOS launcher
+├── img/                  # Screenshots used in README
+├── packaging/            # Linux udev rules, etc.
+├── .github/FUNDING.yml   # GitHub sponsorship config
 └── src/
-    ├── pyproject.toml   # Project metadata + dependencies
-    ├── uv.lock          # Locked dependency versions (do not edit by hand)
-    ├── main.py          # Entry point: arg parsing + main packet loop
+    ├── pyproject.toml    # Project metadata + dependencies
+    ├── uv.lock           # Locked dependency versions (do not edit by hand)
+    ├── main.py           # Entry point: arg parsing + dispatch (GUI vs headless)
+    ├── tests/            # pytest suite (see §11)
     └── modules/
         ├── __init__.py        # Exposes setup_logging() + sub‑packages
         ├── settings.py        # 👈 ALL tunables live here (one dataclass)
+        ├── preferences.py     # JSON persistence of Settings fields
+        ├── loop.py            # Per‑frame backend loop (telemetry → triggers)
+        ├── update_check.py    # Background GitHub release check
         ├── dualsense/
-        │   ├── __init__.py    # Re‑exports DualSense, TriggerAnimation, triggers
+        │   ├── __init__.py    # Re‑exports DualSense, Controller, triggers
         │   ├── main.py        # HID layer (open/close/write to controller)
-        │   └── triggers.py    # Effect primitives + per‑frame TriggerAnimation
-        └── udplistener/
-            ├── __init__.py    # Re‑exports UDPListener, parse_packet
-            └── main.py        # UDP socket + 324‑byte FH packet parser
+        │   └── triggers.py    # Effect primitives + per‑frame Controller
+        ├── udplistener/
+        │   ├── __init__.py    # Re‑exports UDPListener, parse_packet
+        │   └── main.py        # UDP socket + 324‑byte FH packet parser
+        ├── exit_detection/
+        │   └── main.py        # ProcessWatcher: exit when the game closes
+        └── gui/
+            ├── __init__.py    # Re‑exports TriggerGUI
+            ├── app.py         # CustomTkinter window: Controls / Settings / Logs
+            ├── backend.py     # BackendController: owns HID + listener + loop thread
+            ├── labels.py      # Plain‑English labels + help text per Settings field
+            ├── tabs.py        # Tab content builders + coerce_clamp pure helper
+            └── widgets.py     # Tooltip, HelpButton, log handler, log textbox
 ```
 
-The whole codebase is **~6 small files**. Read them in this order:
+Read the source in this order to get oriented:
 
-1. `src/main.py`
-2. `src/modules/settings.py`
-3. `src/modules/udplistener/main.py`
-4. `src/modules/dualsense/triggers.py`
-5. `src/modules/dualsense/main.py`
+1. `src/main.py` — argparse, the GUI-vs-headless dispatch
+2. `src/modules/settings.py` — the single dataclass of tunables
+3. `src/modules/loop.py` — per‑frame backend loop, the seam every frontend reuses
+4. `src/modules/udplistener/main.py`
+5. `src/modules/dualsense/triggers.py`
+6. `src/modules/dualsense/main.py`
+7. `src/modules/gui/app.py` — frontend; the orchestrator
 
 ---
 
@@ -180,7 +196,8 @@ uv run main.py    # runs the service
 | `--host` | UDP bind address (default `127.0.0.1`) |
 | `--port` | UDP port (default `5300`) |
 | `--debug` | Enable per‑packet DEBUG logs |
-| trailing args | Optional game command — service exits when game exits (Steam wrapper mode) |
+| `--gui` | **Opt in** to the experimental CustomTkinter window. Default is headless (no flag). |
+| `--headless` | Explicit headless mode — same as no flag. Symmetry only. |
 
 ### In‑game setup (must do once)
 Forza Horizon → **Settings → HUD and Gameplay → Data Out: ON**, IP `127.0.0.1`,
@@ -256,6 +273,38 @@ See README §"Troubleshooting" for the user‑facing version.
 | Touch raw HID bytes | `src/modules/dualsense/main.py` |
 | Add a telemetry field | `src/modules/udplistener/main.py` |
 | Change CLI / startup wiring | `src/main.py` |
-| Change Windows launcher behavior | `start.bat` |
+| Change a GUI label or help text | `src/modules/gui/labels.py` |
+| Change GUI layout / widgets | `src/modules/gui/app.py` |
+| Change persistence format | `src/modules/preferences.py` |
+| Change Windows launcher behavior | `win_start.bat` |
+| Change Linux launcher behavior | `linux_start.sh` |
+
+---
+
+## 11. Tests, lint, type check
+
+From inside `src/`:
+
+```bash
+# default (fast) — pure-logic + module tests, no Tk
+uv run pytest
+
+# opt-in GUI tests (one Tk root per pytest process, so each file separately)
+uv run pytest tests/test_gui_smoke.py     -m gui --override-ini="addopts="
+uv run pytest tests/test_gui_lifecycle.py -m gui --override-ini="addopts="
+uv run pytest tests/test_widgets.py       -m gui --override-ini="addopts="
+
+# lint and type check (scoped to the GUI module)
+uv run ruff check tests/ modules/gui/
+uv run mypy
+```
+
+The `gui` marker exists because Tkinter doesn't support more than one Tk
+root per process — running every GUI test in one `pytest` invocation
+trips a Tcl reinit failure. Splitting GUI tests across multiple `pytest`
+invocations gives each one its own fresh process and root.
+
+Dev dependencies (`pytest`, `pytest-timeout`, `mypy`, `ruff`) are installed
+via `uv sync --group dev`.
 
 That's the whole project. Welcome aboard.

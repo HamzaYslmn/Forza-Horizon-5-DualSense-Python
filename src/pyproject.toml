@@ -1,16 +1,54 @@
 [project]
 name = "src"
-version = "1.1.10"
+version = "1.2.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "hidapi>=0.15.0",
     "psutil>=7.2.2",
-    "textual>=8.2.5",
+    "customtkinter>=5.2,<6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-timeout>=2.3",
+    "mypy>=1.11",
+    "ruff>=0.6",
 ]
 
 [tool.ruff]
 line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 30
+# GUI tests are opt-in because Tk doesn't support multiple roots per process.
+# Default run (`pytest`) executes pure/unit tests only. To run GUI tests,
+# point pytest at a single GUI file at a time:
+#     uv run pytest tests/test_gui_smoke.py
+#     uv run pytest tests/test_gui_lifecycle.py
+addopts = "-m 'not gui'"
+markers = [
+    "gui: tests that create a Tk root (one per pytest process). Skipped by default.",
+]
+filterwarnings = [
+    # CTk emits a CTkLabel deprecation hint during tests for some font args;
+    # silenced because it's CTk-internal, not our code.
+    "ignore::DeprecationWarning",
+]
+
+[tool.mypy]
+# Scope: only my contribution. The rest of the codebase has its own style
+# and is out of scope for this PR.
+python_version = "3.13"
+files = ["modules/gui"]
+follow_imports = "silent"   # imported modules (settings, preferences, etc.) aren't type-checked
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
 
 [tool.uv.sources]
