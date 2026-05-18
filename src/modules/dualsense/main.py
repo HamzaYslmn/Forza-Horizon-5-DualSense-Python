@@ -29,19 +29,19 @@ USB = {"rid": 0x02, "flags": 1, "vf1": 2, "psav": 10, "r": 11, "l": 22, "size": 
 BT  = {"rid": 0x31, "flags": 2, "vf1": 3, "psav": 11, "r": 12, "l": 23, "size": 78, "bt": True}
 
 
+def _enumerate_dualsenses():
+    return [d for d in hid.enumerate(VENDOR_ID, 0)
+            if d.get("product_id") in PRODUCT_IDS]
+
+
 def _find_gamepad():
     """Pick the Game Pad HID interface (usage_page=1, usage=5) or None.
     Audio/sensor interfaces share VID/PID and silently drop trigger writes."""
-    devices = hid.enumerate(VENDOR_ID, 0)
+    devices = _enumerate_dualsenses()
     for d in devices:
-        if (d.get("product_id") in PRODUCT_IDS
-                and d.get("usage_page", 1) == 1
-                and d.get("usage", 5) == 5):
+        if d.get("usage_page", 1) == 1 and d.get("usage", 5) == 5:
             return d
-    for d in devices:
-        if d.get("product_id") in PRODUCT_IDS:
-            return d
-    return None
+    return devices[0] if devices else None
 
 
 def _is_bluetooth(info):
@@ -93,9 +93,10 @@ class DualSense:
         self,
         startup_pulse_force: int = 180,
         enable_startup_pulse: bool = True,
-        reconnect_interval_s: float = 10.0,
+        reconnect_interval_s: float = 5.0,
     ):
         self.dev = None
+        self.dev_path = None
         self.lay = USB
         self._lock = threading.Lock()
         self._left = self._right = off()
@@ -105,12 +106,20 @@ class DualSense:
         self._pulse_force = startup_pulse_force
         self._enable_startup_pulse = enable_startup_pulse
         self._reconnect_interval = reconnect_interval_s
-        self._connected = False
         self._open_hinted = False
+        # Re-enumerate HID while connected to detect silent unplugs — Windows
+        # hidapi's write() can return -1 on a stale handle without raising.
+        self._presence_check_interval = 5.0
+        self._last_presence_check = 0.0
+        # Idle-input watchdog — DualSense streams input reports continuously
+        # (hundreds of Hz). On a Bluetooth drop, Windows keeps the HID node
+        # alive and writes get buffered, but the input stream stops cold.
+        self._input_idle_timeout = 3.0
+        self._last_input_at = 0.0
 
     @property
     def connected(self) -> bool:
-        return self._connected
+        return self.dev is not None
 
     def open(self):
         """Start the I/O thread. Never raises if the controller is absent."""
@@ -143,9 +152,12 @@ class DualSense:
                 self._open_hinted = True
             return False
         self.dev = dev
+        self.dev_path = info.get("path")
         self.lay = BT if _is_bluetooth(info) else USB
-        self._connected = True
         self._open_hinted = False
+        now = time.monotonic()
+        self._last_presence_check = now
+        self._last_input_at = now
         log.info("DualSense connected (%s)", "BT" if self.lay["bt"] else "USB")
 
         if self._enable_startup_pulse:
@@ -162,7 +174,8 @@ class DualSense:
             pass
         return True
 
-    def _disconnect(self):
+    def _disconnect(self, reason: str = ""):
+        was_connected = self.dev is not None
         if self.dev is not None:
             try:
                 self.dev.write(self._build(off(), off()))
@@ -173,17 +186,30 @@ class DualSense:
             except Exception:
                 pass
         self.dev = None
-        if self._connected:
-            log.warning("DualSense disconnected — retrying every %.0fs", self._reconnect_interval)
-        self._connected = False
+        self.dev_path = None
+        if was_connected:
+            suffix = f" ({reason})" if reason else ""
+            log.warning("DualSense disconnected%s — retrying every %.0fs",
+                        suffix, self._reconnect_interval)
+
+    def _device_still_present(self) -> bool:
+        """Return True if our currently-open HID path still appears in enumeration."""
+        if self.dev_path is None:
+            return False
+        try:
+            devices = _enumerate_dualsenses()
+        except Exception:
+            # Enumeration error shouldn't itself force a disconnect.
+            return True
+        return any(d.get("path") == self.dev_path for d in devices)
 
     # MARK: I/O thread — connect, write while connected, reconnect on error
     def _io(self):
         last_attempt = -1e9
         announced_waiting = False
         while self._running:
-            if not self._connected:
-                now = time.monotonic()
+            now = time.monotonic()
+            if not self.connected:
                 if now - last_attempt < self._reconnect_interval:
                     time.sleep(0.1)
                     continue
@@ -198,9 +224,21 @@ class DualSense:
 
             try:
                 try:
-                    self.dev.read(self.lay["size"])  # nonblocking drain
+                    data = self.dev.read(self.lay["size"])  # nonblocking drain
                 except OSError:
-                    pass
+                    self._disconnect("read failed")
+                    continue
+                if data:
+                    self._last_input_at = now
+                elif now - self._last_input_at >= self._input_idle_timeout:
+                    self._disconnect(f"no input for {self._input_idle_timeout:.0f}s")
+                    continue
+
+                if now - self._last_presence_check >= self._presence_check_interval:
+                    self._last_presence_check = now
+                    if not self._device_still_present():
+                        self._disconnect("no longer enumerated")
+                        continue
 
                 with self._lock:
                     if not self._dirty:
@@ -208,35 +246,40 @@ class DualSense:
                         continue
                     left, right, self._dirty = self._left, self._right, False
 
-                self.dev.write(self._build(left, right))
+                n = self.dev.write(self._build(left, right))
+                if n is not None and n <= 0:
+                    self._disconnect(f"write returned {n}")
             except Exception as e:
-                log.warning("HID write failed (%s) — will reconnect", e)
-                self._disconnect()
+                self._disconnect(f"write failed: {e}")
 
-    def _build(self, left, right):
+    def _new_report(self):
         L = self.lay
         buf = bytearray(L["size"])
         buf[0] = L["rid"]
         if L["bt"]:
             buf[1] = 0x02
+        return buf
+
+    def _finalize_bt_crc(self, buf):
+        if self.lay["bt"]:
+            struct.pack_into("<I", buf, 74, zlib.crc32(b"\xA2" + bytes(buf[:74])))
+
+    def _build(self, left, right):
+        L = self.lay
+        buf = self._new_report()
         buf[L["flags"]] = TRIG_FLAGS
         for pos, (mode, params) in ((L["r"], right), (L["l"], left)):
             buf[pos] = mode
             for i, b in enumerate(params[:10]):
                 buf[pos + 1 + i] = b & 0xFF
-        if L["bt"]:
-            struct.pack_into("<I", buf, 74, zlib.crc32(b"\xA2" + bytes(buf[:74])))
+        self._finalize_bt_crc(buf)
         return bytes(buf)
 
     def _build_power_saver(self):
         """Build a minimal HID report that enables the power-save flag only."""
         L = self.lay
-        buf = bytearray(L["size"])
-        buf[0] = L["rid"]
-        if L["bt"]:
-            buf[1] = 0x02
+        buf = self._new_report()
         buf[L["vf1"]] |= 0x02          # bit 1 = POWER_SAVE_CONTROL enable
         buf[L["psav"]] |= 0x10         # bit 4 = hardware power save
-        if L["bt"]:
-            struct.pack_into("<I", buf, 74, zlib.crc32(b"\xA2" + bytes(buf[:74])))
+        self._finalize_bt_crc(buf)
         return bytes(buf)

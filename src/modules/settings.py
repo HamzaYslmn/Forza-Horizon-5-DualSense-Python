@@ -80,7 +80,7 @@ class Settings:
 
 
     # Reconnect interval when the controller is missing or disconnects.
-    reconnect_interval_s: float = 10.0
+    reconnect_interval_s: float = 5.0
 
     # Auto-exit when game closes (Windows + Linux/Proton). Telemetry-lost is a fallback for Task Manager kills.
     exit_on_game_close: bool = True
